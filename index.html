@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Human Verification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@4/dist/fp.min.js"></script>
+</head>
+<body style="background: #1a1a1a; color: white; text-align: center; font-family: sans-serif;">
+    <div id="content" style="margin-top: 50px;">
+        <h3 id="status-text">Verifying Connection...</h3>
+        <div id="loader">Processing Device Fingerprint...</div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        // Helper function to safely wait for FingerprintJS to be defined globally
+        function getFingerprintAgent() {
+            return new Promise((resolve, reject) => {
+                if (window.FingerprintJS) {
+                    return resolve(window.FingerprintJS);
+                }
+                let attempts = 0;
+                const interval = setInterval(() => {
+                    attempts++;
+                    if (window.FingerprintJS) {
+                        clearInterval(interval);
+                        resolve(window.FingerprintJS);
+                    } else if (attempts > 30) { // Timeout after 3 seconds
+                        clearInterval(interval);
+                        reject(new Error("FingerprintJS CDN failed to load. Please check your internet connection."));
+                    }
+                }, 100);
+            });
+        }
+
+        async function processVerification() {
+            try {
+                // Wait safely for the fingerprint library initialization
+                const fpLib = await getFingerprintAgent();
+                
+                // Load and get the device unique visitor ID
+                const fp = await fpLib.load();
+                const result = await fp.get();
+                const fingerprint = result.visitorId; 
+
+                // Strict Identity Detection
+                const currentBotUsername = tg.initDataUnsafe.bot?.username;
+                
+                // ⚠️ IMPORTANT: Change this URL to your actual backend domain once deployed
+                // Example: "https://a27562-07d5.k.jrnm.app" or "http://your_vps_ip:8000"
+                const BACKEND_URL = "https://a27571-d2be.k.jrnm.app/";
+
+                // Backend Verification Call
+                const response = await fetch(`${BACKEND_URL}/verify-fingerprint`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        fingerprint: fingerprint,
+                        initData: tg.initData,
+                        batch_id: new URLSearchParams(window.location.search).get('batch_id'),
+                        bot_username: currentBotUsername
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server returned status: ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if(data.status === "ok") {
+                    document.getElementById("status-text").innerText = "Redirecting...";
+                    window.location.href = data.redirect_url;
+                } else {
+                    document.body.innerHTML = `<h3 style="color: #ff4d4d;">Security Alert!</h3><p>${data.message}</p>`;
+                    setTimeout(() => { tg.close(); }, 3000);
+                }
+
+            } catch (error) {
+                console.error("Verification Error Detail:", error);
+                alert("Verification Error: " + error.message);
+                tg.close();
+            }
+        }
+
+        // Run process after page loads completely
+        window.addEventListener('load', processVerification);
+    </script>
+</body>
+</html>
+
